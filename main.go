@@ -64,7 +64,7 @@ func (w *linePrefixWriter) Write(p []byte) (n int, err error) {
 func main() {
 	cmd, err := parseFlags()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "usage: gomon [-r] [-p *.go] cmd [args]")
+		fmt.Fprintln(os.Stderr, "usage: gomon [-p *.go] cmd [args]")
 		return
 	}
 
