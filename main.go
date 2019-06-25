@@ -12,11 +12,11 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/fsnotify/fsnotify"
+	"github.com/dc0d/dirwatch"
 )
 
 var (
-	pattern = flag.String("p", "*.go", "set the watch pattern")
+	pattern = flag.String("p", ".", "set the watch pattern")
 )
 
 func parseFlags() (*exec.Cmd, error) {
@@ -31,8 +31,8 @@ func parseFlags() (*exec.Cmd, error) {
 }
 
 func parseCommand() *exec.Cmd {
-	args := flag.Args()
-	cmd := exec.Command(args[0], args[1:]...)
+	args := append([]string{"run"}, flag.Args()...)
+	cmd := exec.Command("go", args...)
 	cmd.Stdout = &linePrefixWriter{Prefix: []byte("[stdout] "), Output: os.Stdout}
 	cmd.Stderr = &linePrefixWriter{Prefix: []byte("[stderr] "), Output: os.Stderr}
 	return cmd
@@ -64,38 +64,25 @@ func (w *linePrefixWriter) Write(p []byte) (n int, err error) {
 func main() {
 	cmd, err := parseFlags()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "usage: gomon [-p *.go] cmd [args]")
+		fmt.Fprintln(os.Stderr, "usage: gomon [gofile] [args]")
 		return
 	}
-
-	// creates a new file watcher
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		log.Fatalf("failed to create watcher: %v", err)
-	}
-	defer watcher.Close()
 
 	// set up shutdown handler
 	done := make(chan os.Signal)
 	signal.Notify(done, syscall.SIGTERM)
 	signal.Notify(done, syscall.SIGINT)
 
-	// wait for events
-	go func() {
-		for {
-			select {
-			case event := <-watcher.Events:
-				// ignore errors for now
-				cmd.Process.Kill()
-				cmd.Process.Wait()
-				cmd = parseCommand()
-				cmd.Start()
-				log.Printf("File %s %v, restarted process %v", event.Name, event.Op, cmd.Args)
-			case err := <-watcher.Errors:
-				log.Fatalf("failed to watch: %v", err)
-			}
-		}
-	}()
+	changed := func(event dirwatch.Event) {
+		// ignore errors for now
+		cmd.Process.Kill()
+		cmd.Process.Wait()
+		cmd = parseCommand()
+		cmd.Start()
+		log.Printf("File %s %v, restarted process %v", event.Name, event.Op, cmd.Args)
+	}
+	watcher := dirwatch.New(dirwatch.Notify(changed))
+	defer watcher.Stop()
 
 	// out of the box fsnotify can watch a single file, or a single directory
 	matches, err := filepath.Glob(*pattern)
@@ -103,9 +90,7 @@ func main() {
 		log.Fatalf("failed to list files: %v", err)
 	}
 	for _, file := range matches {
-		if err := watcher.Add(file); err != nil {
-			log.Fatalf("failed to watch: %v", err)
-		}
+		watcher.Add(file, true)
 	}
 
 	// start command
